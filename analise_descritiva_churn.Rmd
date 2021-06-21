@@ -1,0 +1,306 @@
+---
+title: "Análise descritiva do churn de clientes"
+author: "Gustavo Godinho"
+date: "21/06/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Análise descritiva dos contratos de locações dos clientes
+
+Aqui será feita uma análise para descrição das locações de veículos dos clientes. Na tabela de dados estão os contratos de locação entre 01/01/2015 e 31/12/2020. O grande objetivo é a verificar se o churn (definição abaixo) dos clientes está crescendo com o passar do tempo.
+
+**Churn:** é considerado que o cliente faz parte do churn quando ele não fecha mais contratos de locação ou fica mais de um ano sem o fazê-lo.
+
+No entanto, temos uma pequena observação nessa tabela de dados. Como os registros de locação vão até 31/12/2020, não é possível avaliar se os clientes que fecharam seu último contrato em 2020 se tornaram parte do churn ou não, pois eles podem ter feito um ou mais contratos no ano de 2021 que não estão nos registros fornecidos. Portanto, os contratos que se enquadram nesse caso, serão denotados como *sem determinação* de churn.
+
+Fazendo a leitura dos dados e os manipulando para fazer a análise:
+```{r leitura_dados, results='hide', message=FALSE}
+# solicitando o carregamento do pacote necessario para leitura e manipulacao dos dados 
+require(tidyverse)
+
+caminho_dados <- "D:/teste localiza/base_teste.csv" # colocar aqui o caminho em que o arquivo com a tabela de dados esta salva
+
+xdf <- suppressWarnings(readr::read_csv(caminho_dados)) %>% 
+  rename(n = X1) %>% 
+  dplyr::group_by(cd_cliente) %>%
+  dplyr::arrange(cd_cliente, data_abertura_contrato) %>% 
+  dplyr::mutate(data_abertura_novo_contrato = dplyr::lead(data_abertura_contrato, 1)) %>% 
+  dplyr::ungroup() %>% 
+  # é preciso calcular a diferenca da data de abertura dos contratos para 2021 para 
+  # verificar se ja existe ou nao a possibilidade do cliente fazer ou nao parte do churn
+  dplyr::mutate(dif2021 = as.Date('2021-01-01') - as.Date(data_abertura_contrato)) %>% 
+  dplyr::mutate(dif2021 = as.integer(dif2021)) %>% 
+  # calculando a diferenca em dias da data de abertura do contrato atual do cliente para 
+  # a data de abertura do contrato seguinte 
+  dplyr::mutate(dif_contratos = as.Date(data_abertura_novo_contrato) - as.Date(data_abertura_contrato)) %>% 
+  dplyr::mutate(dif_contratos = as.integer(dif_contratos)) %>% 
+  # criando a variavel churn e as condicoes de possiveis valores para essa variavel
+  dplyr::mutate(churn = NA_character_) %>% 
+  dplyr::mutate(churn = ifelse(dif_contratos < 365, 'sem churn', churn)) %>% 
+  dplyr::mutate(churn = ifelse(dif_contratos >= 365, 'com churn', churn)) %>% 
+  dplyr::mutate(churn = ifelse(is.na(dif_contratos) & dif2021 > 365, 'com churn', churn)) %>% 
+  dplyr::mutate(churn = ifelse(is.na(dif_contratos) & dif2021 <= 365, 'sem determinacao', churn)) %>% 
+  dplyr::select(-c(n, dif2021))
+```
+
+Descrição das variáveis contidas no arquivo:
+
+**cidade_retirada:** nome fictício da cidade de retirada do veículo.
+
+**cidade_devolucao:** nome fictício da cidade de devolução do veículo.
+
+**cd_contrato:** código do contrato, chave primária da tabela (1 por observação).
+
+**transporte_locado:** nome fictício do transporte locado.
+
+**data_abertura_contrato:** data de abertura do contrato de locação.
+
+**qtd_diarias:** quantidade de dias que o veículo foi locado.
+
+**data_fechamento_contrato:** data de devolução do veículo e do fechamento do contrato.
+
+**qtd_hora_extra:** quantidade de horas extras que o cliente usou na locação.
+
+**cd_cliente:** código único de identificação do cliente (1 por cliente).
+
+**data_abertura_novo_contrato:** data de abertura do próximo contrato do cliente, se vazio quer dizer que a observação daquela linha foi o último contrato registrado para  aquele cliente.
+
+**dif_contratos:** diferença em dias da data de abertura do contrato atual e a data de abertura do próximo contrato (quando ele existe).
+
+**churn:** variável para relatar se aquele contrato precede um intervalo de 1 ano sem novo contrato (churn) ou não (sem churn), há ainda aqueles casos que não é possível avaliar se aquele contrato precede um cliente que fará parte do churn ou não (sem determinação).
+
+Função para auxiliar a criação de gráficos de barras:
+```{r funcao_grafico_barras}
+executa_grafico_barras <- function(x, main = '', xlab = '', ylab = 'Frequência', col = 'gray90'){
+  
+  tabela <- table(x)
+  aux_max <- max(as.integer(tabela))
+  
+  barplot(tabela, ylim = c(0, 1.2*aux_max), main = main, xlab = xlab, 
+          ylab = ylab, col = col, border = col, yaxt = 'n')
+
+  text(seq(0.7, by = 1.2, len = length(tabela)), 0.1*aux_max + as.integer(tabela), as.integer(tabela))
+  text(seq(0.7, by = 1.2, len = length(tabela)), 0.05*aux_max + as.integer(tabela), paste0('(', round(100*prop.table(tabela), 2), '%)'))
+}
+
+```
+
+O primeiro passo da análise é verificar o número de diárias contratadas.
+```{r grafico_barras_qtde_diarias, fig.width=10, fig.height=6}
+xdf %>% 
+  dplyr::select(qtd_diarias) %>% 
+  dplyr::mutate(qtd_diarias = ifelse(qtd_diarias >= 10, '10+', stringr::str_c(' ',qtd_diarias))) %>% 
+  executa_grafico_barras(main = 'Quantidade de diárias locadas pelos clientes', 
+                         xlab = 'Quantidade de diárias locadas')
+axis(2, at = seq(0, 200000, by = 40000))
+```
+
+Note que 40% das locações são por 1 dia e quase 80% delas é de até 3 dias. Veja também que pouco mais de 95% dos contratos tem duração de até 6 dias e menos de 1% deles tem duração de 10 dias ou mais.
+
+Outro ponto de interesse é verificar quantos contratos cada cliente fecha. Para esse gráfico de barras, algumas quantidades de contratos foram agrupados para melhorar a visualização, por exemplo: a barra referente à [5,10) é o agrupamento de 5, 6, 7, 8 e 9 contratos. A altura das barras é igual a frequência de clientes que possuem aquela determinada quantidade de contratos.
+
+```{r grafico_barras_qtde_contratos_por_cliente, fig.width=12, fig.height=6}
+xdf %>% 
+  dplyr::group_by(cd_cliente) %>% 
+  dplyr::summarise(n = dplyr::n()) %>% 
+  dplyr::select(n) %>% 
+  dplyr::mutate(n1 = n) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 5 & n < 10, '[5, 10)', n1)) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 10 & n < 15, '[10, 15)', n1)) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 15 & n < 20, '[15, 20)', n1)) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 20 & n < 30, '[20, 30)', n1)) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 30 & n < 40, '[30, 40)', n1)) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 40 & n < 50, '[40, 50)', n1)) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 50 & n < 60, '[50, 60)', n1)) %>% 
+  dplyr::mutate(n1 = ifelse(n >= 60, '60+', n1)) %>% 
+  dplyr::arrange(n) %>% 
+  dplyr::mutate(n1 = factor(n1, levels = c('1','2','3','4','[5, 10)',
+                                           '[10, 15)','[15, 20)','[20, 30)',
+                                           '[30, 40)', '[40, 50)','[50, 60)','60+'))) %>% 
+  dplyr::select(n1) %>% 
+  executa_grafico_barras(main = 'Número de contratos por cliente', 
+                         xlab = 'Número de contratos')
+axis(2, at = seq(0, 10000, by = 2000))
+```
+
+Veja que pouco mais de 22% dos clientes possuem apenas 1 contrato, ou seja, ou fecharam o próximo no período fora da abrangência da tabela de contratos fornecidas ou então não fecharam mais contratos e fazem parte do churn. Por esse gráfico de barras também notamos que 46% dos clientes fizeram menos de 5 locações, 63% deles fizeram menos de 10 locações e 80% deles fizeram menos de 20 locações. Somente 10% dos clientes fizaram 30 ou mais locações e somente 5% deles fizaram 40 ou mais contratos de locação.
+
+
+Para avaliação dos churns, um gráfico interessante seria o tempo entre a abertura do contrato atual e o próximo contrato quando ele existir. Para melhor visualização desse gráfico o tempo foi agrupado em semana (representado por s), meses (representado por m) e ano (representado por a). Além disso, quando não há um novo contrato, então essa categoria está representada por "Sem NC" e quando não está determinado se o contrato precede um churn ou não, esses contratos estão representados como "SemDet".
+
+```{r grafico_barras_dif_tempo_contrato, fig.width=14, fig.height=6}
+xdf %>% 
+  dplyr::mutate(num_semanas = dif_contratos %/% 7) %>%
+  dplyr::mutate(num_meses = dif_contratos %/% 30) %>% 
+  dplyr::mutate(num_anos = dif_contratos %/% 365) %>% 
+  dplyr::mutate(cat_dif = NA_character_) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_semanas == 0, '-1s', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_meses == 0 & is.na(cat_dif), '[1s, 1m)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_meses < 2 & is.na(cat_dif), '[1m, 2m)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_meses < 3 & is.na(cat_dif), '[2m, 3m)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_meses < 4 & is.na(cat_dif), '[3m, 4m)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_meses < 5 & is.na(cat_dif), '[4m, 5m)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_meses < 6 & is.na(cat_dif), '[5m, 6m)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_meses >= 6 & num_anos == 0, '[6m, 1a)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(num_anos > 0, '[+1a)', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(churn == 'sem determinacao', 'SemDet', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = ifelse(is.na(dif_contratos) & churn != 'sem determinacao', 'SemNC', cat_dif)) %>% 
+  dplyr::mutate(cat_dif = factor(cat_dif, levels = c('SemDet', 'SemNC', '-1s', 
+                                                     '[1s, 1m)', '[1m, 2m)', '[2m, 3m)', '[3m, 4m)',
+                                                     '[4m, 5m)', '[5m, 6m)', '[6m, 1a)', '[+1a)'))) %>% 
+  dplyr::select(cat_dif) %>% 
+  executa_grafico_barras(main = 'Tempo até o cliente abrir o novo contrato', 
+                         xlab = 'Tempo até abertura de novo contrato',
+                         ylab = 'Frequência (em milhares)',
+                         col = c('yellow', 'tomato', rep('royalblue1', 8), 'tomato'))
+axis(2, at = seq(0, 100000, by = 20000), labels = seq(0, 100, 20))
+legend('topleft', legend = c('sem churn', 'churn', 'não determinado'), 
+       pch = 16, col = c('royalblue1', 'tomato', 'yellow'), bty = 'n')
+```
+
+Observe que interessante, cerca de 24% dos contratos possuem um contrato sucessor em até um mês. Quase 55% deles possui um contrato sucessor em até 3 meses e quase 73% deles possui um sucessor em até 6 meses. Cerca de 84% dos contratos possui um contrato sucessor em até 1 ano (situação de 'não-churn'), quase 7% deles possui um sucessor após 1 ano da data de abertura do contrato atual (situação de churn). 3,71% dos contratos não possui contrato sucessor (também situação de churn) e 5,62% dos contratos não possuíam contrato sucessor, mas foram abertos no ano de 2020 e como a tabela não tem registros no ano de 2021, então não há como saber se esses contratos precederam negócios que fazeram parte do churn ou não.
+
+Para avaliar se o percentual de churn está crescendo ou não, precisamos avaliar o número de contratos abertos durante o tempo. A periodicidade que usarei nessa análise é a semanal, mas poderíamos usar qualquer outra. Veja que em média, 1536 contratos são abertos por semana, com desvio-padrão de 51 contratos.
+
+```{r descricao_contratos_abertos_por_semana}
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(num_contratos = dplyr::n()) %>% 
+  dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>% 
+  dplyr::pull(num_contratos) %>% 
+  summary()
+
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(num_contratos = dplyr::n()) %>% 
+  dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>% 
+  dplyr::pull(num_contratos) %>% 
+  sd()
+```
+
+O histograma do número de contratos abertos por semana está exibido abaixo, veja que a grande parte das semanas possui entre 1450 e 1600 contratos abertos.
+
+```{r hist_novos_contratos_por_semana, fig.width=12, fig.height=6}
+xdf %>% 
+    dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+    dplyr::group_by(semana) %>% 
+    dplyr::summarise(num_contratos = dplyr::n()) %>% 
+    dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>% 
+    dplyr::pull(num_contratos) %>% hist(breaks = 16, col = 'royalblue1', xlab = 'Número de contratos por semana', ylab = 'Frequência', main = 'Histograma do número de contratos abertos por semana')
+```
+
+
+A série temporal é exibida abaixo, foi retirada a primeira e a última semana pois elas não possuíam 7 dias. 
+
+```{r serie_temporal_contratos_abertos_por_semana, fig.width=12, fig.height=6}
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(num_contratos = dplyr::n()) %>% 
+  dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>% 
+  plot(type = 'l', xlab = 'Tempo', ylab = 'Número de contratos abertos',
+       main = 'Série temporal semanal de contratos abertos por semana')
+
+```
+
+Veja na série temporal acima, a média de contratos fica em torno de 1530 ao longo do tempo, sem nenhum período em que a série tenha tendência para cima ou para baixo.
+
+
+Outro interesse pode ser avaliar o número de clientes únicos por semana, abaixo verificamos que a média de clientes ativos por semana é 1507 e que o desvio-padrão é de quase 50 clientes únicos.
+
+```{r descricao_clientes_unicos_por_semana}
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(num_clientes = dplyr::n_distinct(cd_cliente)) %>% 
+  dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>%
+  dplyr::pull(num_clientes) %>% 
+  summary()
+
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(num_clientes = dplyr::n_distinct(cd_cliente)) %>% 
+  dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>%
+  dplyr::pull(num_clientes) %>% 
+  sd()
+```
+
+
+O histograma do número de clientes únicos por semana está exibido abaixo, veja que a grande parte das semanas possui entre 1400 e 1600 clientes únicos.
+
+```{r hist_clientes_unicos_por_semana, fig.width=12, fig.height=6}
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(num_clientes = dplyr::n_distinct(cd_cliente)) %>% 
+  dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>%
+  dplyr::pull(num_clientes) %>% 
+  hist(breaks = 16, col = 'royalblue1', xlab = 'Número de clientes únicos por semana', ylab = 'Frequência', main = 'Histograma do número de clientes únicos por semana')
+```
+
+A série temporal para essa variável é exibida abaixo, foi retirada a primeira e a última semana pois elas não possuíam 7 dias. 
+
+```{r serie_temporal_clientes_unicos_por_semana, fig.width=12, fig.height=6}
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(num_clientes = dplyr::n_distinct(cd_cliente)) %>% 
+  dplyr::filter(!(semana %in% c(min(semana), max(semana)))) %>% 
+  plot(type = 'l', xlab = 'Tempo', ylab = 'Número de clientes únicos',
+       main = 'Série temporal semanal de clientes únicos por semana')
+
+```
+
+Veja na série temporal acima, a média de clientes ativos por semana está em torno de  1500 ao longo de todo o período contido na tabela fornecida e que não há nenhuma tendência de queda ou aumento ao longo do tempo.
+
+Para verificar se o percentual de churn está aumentando durante o tempo, vamos observar a série temporal do percentual de contratos que precederam um churn (intervalo maior que 1 ano sem contratos). 
+
+```{r serie_temporal_percentual_contratos_churn, fig.width=12, fig.height=6}
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana) %>% 
+  dplyr::summarise(
+    num_contratos = dplyr::n(), 
+    precede_churn = sum(churn == 'com churn')) %>% 
+  dplyr::mutate(perc = 100*precede_churn/num_contratos) %>% 
+  dplyr::mutate(perc = ifelse(precede_churn == 0, NA_real_, perc)) %>% 
+  dplyr::select(semana, perc) %>% 
+  plot(type = 'l', yaxt = 'n', xlab = 'Tempo', 
+     ylab = 'Percentual de contratos que precedem churn', 
+       main = 'Série temporal semanal do percentual de contratos que precedem churn')
+axis(2, at = seq(0, 15, 1))
+```
+
+Observe que a partir de 2020 não podemos afirmar que os contratos fechados esse ano precederam um ano, pois os dados não contém os registros do ano de 2021, por isso a partir de 2020 a série temporal não possui valores. Antes disso, o percentual de contratos que precederam churn esteve em torno de 13% dos contrato ao longo do tempo, não apresentando qualquer tendência de desvio para cima ou para baixo desse percentual, ou seja, parece que o percentual de churn não está aumentando ou diminuindo com o passar do tempo.
+
+Outro gráfico que serviria para avaliarmos o churn é o percentual de clientes ativos na semana que tiveram pelo menos um churn, ou seja, que ficaram sem fechar novos contratos em até 1 ano.
+
+```{r serie_temporal_percentual_clientes_ativos_churn, fig.width=12, fig.height=6}
+xdf %>% 
+  dplyr::mutate(semana = lubridate::floor_date(data_abertura_contrato, unit = 'week')) %>% 
+  dplyr::group_by(semana, cd_cliente) %>% 
+  dplyr::mutate(churn1 = sum(churn == 'com churn')) %>% 
+  dplyr::mutate(churn1 = ifelse(churn1 == 0, 'sem_churn', 'com_churn')) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::distinct(semana, cd_cliente, churn1) %>% 
+  dplyr::group_by(semana, churn1) %>% 
+  dplyr::summarise(n = dplyr::n(), .groups = 'drop') %>% 
+  tidyr::spread(churn1, n) %>% 
+  dplyr::mutate(n = com_churn + sem_churn) %>% 
+  dplyr::mutate(perc = 100*com_churn/n) %>% 
+  dplyr::select(semana, perc) %>% 
+  plot(type = 'l', xlab = 'Tempo', ylab = 'Percentual de clientes únicos que se tornaram churn',
+       main = 'Série temporal semanal do percentual de\nclientes únicos que se tornaram churn', yaxt = 'n')
+axis(2, at = seq(0, 15, 1))  
+```
+
+Observe mais uma vez que a partir de 2020 não podemos afirmar que os clientes que fecharam contrato nesse ano serão parte do churn ou não, pois os dados não contém os registros do ano de 2021, por isso a partir de 2020 a série temporal não possui valores. Antes disso, o percentual de clientes ativos nas semanas que passaram a fazer parte do churn esteve em torno de 13% dos clientes ativos ao longo do tempo, não apresentando qualquer tendência de desvio para cima ou para baixo desse percentual, ou seja, parece que o percentual de churn  entre os clientes não está aumentando ou diminuindo com o passar do tempo.
+  
+Outros pontos que trabalhos futuros poderiam abordar é a relação entre o número de contratos e/ou veículos alugados e/ou número de diárias e o churn. Por falta de tempo e por não ser o interesse da análise descritiva do problema, eu não o fiz.
